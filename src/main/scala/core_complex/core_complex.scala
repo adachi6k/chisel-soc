@@ -3,8 +3,11 @@ package core_complex
 import chisel3._
 import cpu.{CpuDebugMonitor, RVConfig}
 import freechips.rocketchip.config._
-import freechips.rocketchip.tilelink._
 import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.tilelink._
+import freechips.rocketchip.amba.axi4._
+import freechips.rocketchip.util._
+
 
 class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: Int, txns: Int)(implicit p: Parameters) extends LazyModule {
   val loader = LazyModule(new loader("loader"))
@@ -13,6 +16,24 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
   val core   = Seq.tabulate(numCores) { case i => LazyModule(new CoreTop(conf, i, "core" + i.toString)) }
   val xbar   = LazyModule(new TLXbar)
   val memory = LazyModule(new TLRAM(AddressSet(0x80000000L, 0x0ffff), beatBytes = ramBeatBytes))
+//  val axiram = LazyModule(new AXI4RAM(AddressSet(0x80010000L, 0xffff), beatBytes = ramBeatBytes))
+  val tl2axi = LazyModule(new TLToAXI4)
+
+  val node = AXI4SlaveNode(
+    //  val node = AXI4BlindOutputNode(
+    Seq(AXI4SlavePortParameters(
+      slaves = Seq(AXI4SlaveParameters(
+        address     = Seq(AddressSet(0x80010000L, 0xffff)),
+        //        resources   = device.reg,
+        regionType  = RegionType.UNCACHED,
+        executable  = true,
+        supportsWrite = TransferSizes(1,4),
+        supportsRead  = TransferSizes(1,4),
+        interleavedId = Some(0)
+      )),
+      beatBytes = ramBeatBytes
+    )))
+
 
   xbar.node := loader.node
   core.foreach { case (core) => {
@@ -21,6 +42,9 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
   }
   }
   memory.node := xbar.node
+  tl2axi.node := xbar.node
+  //axiram.node := tl2axi.node
+  this.node := tl2axi.node
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
@@ -30,7 +54,24 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
       val ready = Output(Bool())
 
       val cpu_dbg = Output(Vec(numCores, new CpuDebugMonitor(conf)))
+
+      val arvalid = Output(Bool())
+    //  val arready = Input(Bool())
+      val araddr = Output(UInt(32.W))
+    //  val ardata = Input(UInt(32.W))
+      val awvalid = Output(Bool())
+    //  val awready = Input(Bool())
+      val awaddr = Output(UInt(32.W))
+
+      val wvalid  = Output(Bool())
+      val wdata   = Output(UInt(32.W))
+
+
+
     })
+
+    val (out, edge) = node.out(0)
+
 
     loader.module.io.req  := io.req && (io.addr(31,16) =/= 0x2000.U)
     loader.module.io.addr := io.addr
@@ -44,5 +85,16 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
     core.zip(cpu_run).foreach { case (core, cpu_run) => core.module.io.run := cpu_run }
 
     io.cpu_dbg := core.map { case(core) => core.module.io.dbg_monitor }
+
+
+    io.arvalid := out.ar.valid
+    io.araddr  := out.ar.bits.addr
+
+    io.awvalid := out.aw.valid
+    io.awaddr  := out.aw.bits.addr
+
+    io.wvalid  := out.w.valid
+    io.wdata   := out.w.bits.data
+
   }
 }
