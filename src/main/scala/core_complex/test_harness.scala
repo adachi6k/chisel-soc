@@ -15,6 +15,7 @@ class TestHarness()(implicit p: Parameters) extends Module {
 
   val io = IO(new Bundle {
     val success = Output(Bool())
+    val araddr =  Output(UInt(32.W))
   })
 
   val ldut = LazyModule(new core_complex(rv_conf, numCores = numCores, 4, 5000))
@@ -36,6 +37,8 @@ class TestHarness()(implicit p: Parameters) extends Module {
   }}
 
   io.success := false.B
+
+  io.araddr := dut.io.araddr
 
   ElaborationArtefacts.add("graphml", ldut.graphML)
 }

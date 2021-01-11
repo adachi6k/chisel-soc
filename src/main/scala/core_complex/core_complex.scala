@@ -11,7 +11,6 @@ import freechips.rocketchip.util._
 
 class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: Int, txns: Int)(implicit p: Parameters) extends LazyModule {
   val loader = LazyModule(new loader("loader"))
-
   // val ifu    = LazyModule(new ifu("ifu"))
   val core   = Seq.tabulate(numCores) { case i => LazyModule(new CoreTop(conf, i, "core" + i.toString)) }
   val xbar   = LazyModule(new TLXbar)
@@ -19,20 +18,43 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
 //  val axiram = LazyModule(new AXI4RAM(AddressSet(0x80010000L, 0xffff), beatBytes = ramBeatBytes))
   val tl2axi = LazyModule(new TLToAXI4)
 
-  val node = AXI4SlaveNode(
+//  val m_tl_node = LazyModule(new TLIdentityNode)  
+//  val m_tl_node = TLIdentityNode()
+
+  val m_node = AXI4MasterNode(
+    Seq(
+      AXI4MasterPortParameters(
+        masters = Seq(AXI4MasterParameters(
+          name    = "Ext Master",
+          id      = IdRange(0, 1))))))
+//          id      = IdRange(0, 256))))))
+
+//  (xbar.node
+//    := TLBuffer()
+//    := TLWidthWidget(4)
+//    := AXI4ToTL()
+//    := AXI4UserYanker(capMaxFlight=Some(0))
+//    := AXI4Fragmenter()
+//    := AXI4IdIndexer(idBits=0)
+//    := AXI4Buffer()
+//    := m_node)
+  
+  val device = new MemoryDevice
+  val s_node = AXI4SlaveNode(
     //  val node = AXI4BlindOutputNode(
     Seq(AXI4SlavePortParameters(
       slaves = Seq(AXI4SlaveParameters(
         address     = Seq(AddressSet(0x80010000L, 0xffff)),
-        //        resources   = device.reg,
+        resources   = device.reg,
         regionType  = RegionType.UNCACHED,
         executable  = true,
         supportsWrite = TransferSizes(1,4),
         supportsRead  = TransferSizes(1,4),
         interleavedId = Some(0)
       )),
-      beatBytes = ramBeatBytes
-    )))
+//      beatBytes = ramBeatBytes)
+      beatBytes = 4)
+    ))
 
 
   xbar.node := loader.node
@@ -44,7 +66,7 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
   memory.node := xbar.node
   tl2axi.node := xbar.node
   //axiram.node := tl2axi.node
-  this.node := tl2axi.node
+  this.s_node := tl2axi.node
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
@@ -70,8 +92,8 @@ class core_complex[Conf <: RVConfig] (conf: Conf, numCores: Int, ramBeatBytes: I
 
     })
 
-    val (out, edge) = node.out(0)
-
+//    val (out, edge) = node.out(0)
+    val (out, _) = s_node.in(0)
 
     loader.module.io.req  := io.req && (io.addr(31,16) =/= 0x2000.U)
     loader.module.io.addr := io.addr
